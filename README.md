@@ -1,38 +1,48 @@
-# Dual-Mode Line Following Robot (Arduino Mega / Uno)
+# Line-Following Robot with Remote Control
 
-This project controls a mobile robot using an **Arduino** board (Uno or Mega) that communicates with an **ESP32** (or similar Bluetooth/Wi-Fi module) to receive commands from a **PS4-style controller**. The robot features a dual-mode operation: **Manual Drive** via the joystick and **Autonomous Line Following** using three infrared (IR) sensors.
-
-
+Arduino-based line-following robot with dual operating modes: autonomous line tracking using **PD control** with a **5-sensor array** and manual control via ESP32 wireless gamepad.
 
 ---
 
 ## Features
 
-* **Dual-Mode Control:**
-    * **Manual Mode:** Direct control of movement using an external controller's joystick (via the ESP32 bridge).
-    * **Autonomous Mode:** Robot follows a black line on a white surface using a 3-sensor array.
-* **Differential Drive:** Uses two DC gear motors for movement and turning.
-* **Serial Communication:** Employs `SoftwareSerial` to receive structured data (joystick values and button presses) from the ESP32.
-* **Simple State Management:** Uses dedicated buttons (`Cross` and `Circle`) to switch between Manual and Auto modes.
+* **Dual Operating Modes:**
+    * **Auto Mode:** PD-controlled line following with 5-sensor array for precise tracking
+    * **Manual Mode:** Joystick control via wireless gamepad
+  
+* **Dynamic Speed Control:**
+    * Adjustable base speed via controller buttons (L1/R1)
+    * Automatic speed reduction on sharp turns
+    * Speed range: 60-255 (PWM)
+
+* **Advanced Line Following:**
+    * 5-sensor weighted position calculation
+    * PD (Proportional-Derivative) control algorithm
+    * Line memory when sensors lose track
+    * Adaptive speed for curves
 
 ---
 
 ## Hardware Requirements
 
-* **Microcontroller:** Arduino Uno or Arduino Mega.
-* **Motor Driver:** L298N, TB6612FNG, or similar H-Bridge driver.
-* **Motors:** Two DC Gear Motors (e.g., geared TT motors).
-* **Line Sensors:** Three **Infrared (IR) Tracking Sensors** (Digital Output).
-* **Communication Module:** ESP32, ESP8266, or HC-05 (needs separate code to read the PS4 controller and send the data packet).
-* **Power Supply:** Battery packs for the motors and the Arduino.
+### Microcontrollers
+* **Arduino board** (Uno/Nano recommended)
+* **ESP32** (for wireless controller communication)
+
+### Components
+* **Motor Driver:** Dual H-Bridge motor driver (L298N, TB6612FNG, or similar)
+* **Motors:** 2x DC motors with wheels
+* **Sensors:** **5x IR line sensors** (digital output)
+* **Communication:** SoftwareSerial connection between Arduino and ESP32
+* **Power Supply:** Battery packs for motors and Arduino
 
 ---
 
 ## Wiring & Pinout
 
-The following table shows the pin assignments used in the Arduino sketch.
+### Motor Pins
 
-| Component | Pin Function | Arduino Pin | Notes |
+| Motor | Pin Function | Arduino Pin | Notes |
 | :--- | :--- | :--- | :--- |
 | **Left Motor** | PWM (Speed) | `5` (`Lpwm_pin`) | PWM capable pin |
 | | Direction 1 (Forward) | `4` (`pinLF`) | Digital I/O |
@@ -40,64 +50,258 @@ The following table shows the pin assignments used in the Arduino sketch.
 | **Right Motor** | PWM (Speed) | `6` (`Rpwm_pin`) | PWM capable pin |
 | | Direction 1 (Forward) | `8` (`pinRF`) | Digital I/O |
 | | Direction 2 (Backward) | `7` (`pinRB`) | Digital I/O |
-| **Sensor Left** | Digital Input | `A0` (`SENSOR_LEFT`) | Analog pin used as Digital Input |
-| **Sensor Center** | Digital Input | `A2` (`SENSOR_CENTER`) | Analog pin used as Digital Input |
-| **Sensor Right** | Digital Input | `A1` (`SENSOR_RIGHT`) | Analog pin used as Digital Input |
-| **ESP32/RX** | SoftwareSerial RX (Arduino TX) | `11` | Connect to ESP32 TX |
-| **ESP32/TX** | SoftwareSerial TX (Arduino RX) | `10` | Connect to ESP32 RX |
 
-**Note:** Ensure the **GND** of the Arduino, Motor Driver, Sensors, and the ESP32 are all **connected together (common ground)**.
+### Sensor Pins (5-Sensor Array)
+
+| Sensor Position | Arduino Pin | Notes |
+| :--- | :--- | :--- |
+| **Far Left (FL)** | `A1` (`SENSOR_LEFT`) | Analog pin as Digital Input |
+| **Middle Left (ML)** | `A3` (`SENSOR_MIDDLE_LEFT`) | Analog pin as Digital Input |
+| **Center (M)** | `A5` (`SENSOR_MIDDLE`) | Analog pin as Digital Input |
+| **Middle Right (MR)** | `A2` (`SENSOR_MIDDLE_RIGHT`) | Analog pin as Digital Input |
+| **Far Right (FR)** | `A0` (`SENSOR_RIGHT`) | Analog pin as Digital Input |
+
+### Communication Pins
+
+| Function | Arduino Pin | Connection |
+| :--- | :--- | :--- |
+| **ESP32 RX** | `10` | Connect to ESP32 TX |
+| **ESP32 TX** | `11` | Connect to ESP32 RX |
+
+**Note:** Ensure **common ground (GND)** connection between Arduino, Motor Driver, Sensors, and ESP32.
 
 ---
 
-## Software & Configuration
+## Communication Protocol
 
-### 1. The Data Packet Format
+The Arduino receives data from ESP32 in a comma-separated format enclosed in angle brackets:
 
-The Arduino expects data from the ESP32 (or external controller) in a specific, comma-separated format, enclosed in angle brackets:
+```
+<Y,X,Cross,Circle,L1,R1>
+```
 
-$$\langle Y, X, Cross, Circle \rangle$$
+### Data Packet Format
 
 | Variable | Type | Range | Description |
 | :--- | :--- | :--- | :--- |
-| **Y** | `int` | $-255$ to $255$ | Joystick Y-axis (Throttle/Forward-Backward) |
-| **X** | `int` | $-255$ to $255$ | Joystick X-axis (Steering/Left-Right) |
-| **Cross** | `int` | $0$ or $1$ | Button State (Activates Line Following Mode) |
-| **Circle** | `int` | $0$ or $1$ | Button State (Activates Manual Drive Mode) |
+| **Y** | `int` | -127 to 127 | Joystick Y-axis (Throttle/Forward-Backward) |
+| **X** | `int` | -127 to 127 | Joystick X-axis (Steering/Left-Right) |
+| **Cross** | `int` | 0 or 1 | Button State (Enable Auto Mode) |
+| **Circle** | `int` | 0 or 1 | Button State (Enable Manual Mode) |
+| **L1** | `int` | 0 or 1 | Button State (Decrease Speed) |
+| **R1** | `int` | 0 or 1 | Button State (Increase Speed) |
 
-**You must ensure your ESP32 code sends data in this exact format and baud rate.**
+**Example:** `<50,-30,0,0,0,1>` means joystick at Y=50, X=-30, R1 pressed
 
-### 2. Sensor Logic
+**Serial Configuration:**
+* Arduino: 115200 baud (USB Serial Monitor)
+* ESP32: 9600 baud (SoftwareSerial)
 
-The `runLineFollower` function is configured for **Active-LOW** sensors, meaning:
+---
 
-* **`1` (HIGH) = Black Line Detected**
-* **`0` (LOW) = White Floor Detected**
+## Control Guide
 
-If your sensors output the opposite, you need to change the logic checks (e.g., `if (C == 0 && L == 1 && R == 1)`).
+### Controller Mapping
 
-### 3. Line Following Behavior
+| Button/Input | Function |
+| :--- | :--- |
+| **Cross (X)** | Switch to Auto Mode (line following) |
+| **Circle (O)** | Switch to Manual Mode (stop + manual control) |
+| **L1** | Decrease base speed by 25 |
+| **R1** | Increase base speed by 25 |
+| **Left Joystick** | Manual driving (Y=forward/back, X=steering) |
 
-The robot uses a simple **proportional-like** algorithm:
+### Operating Modes
 
-| Situation | L | C | R | Action |
-| :--- | :--- | :--- | :--- | :--- |
-| **Straight** | 0 | 1 | 0 | **Go Straight** (`FOLLOW_SPEED`) |
-| **Drifting Right** | 1 | 0 | 0 | **Turn Left** (`rotate_left(TURN_SPEED)`) |
-| **Drifting Left** | 0 | 0 | 1 | **Turn Right** (`rotate_right(TURN_SPEED)`) |
-| **Lost Line** | 0 | 0 | 0 | **Stop** (`stopRobot()`) |
-| **Intersection** | 1 | 1 | 1 | **Go Straight** (Prioritizing Center) |
+**Auto Mode (Line Following)**
+* Robot autonomously follows a dark line on light surface
+* Uses PD control for smooth tracking
+* Automatically slows down on sharp curves
+* Maintains line even if temporarily lost
+
+**Manual Mode**
+* Direct joystick control
+* Y-axis: Forward/backward throttle
+* X-axis: Left/right steering
+* Deadzone of ±15 to prevent drift
+
+---
+
+## Tuning Parameters
+
+### PD Controller
+```cpp
+float Kp = 25;  // Proportional gain (responsiveness)
+float Kd = 15;  // Derivative gain (damping/smoothness)
+```
+
+### Speed Settings
+```cpp
+int BASE_SPEED = 150;      // Default straight-line speed
+int MAX_SPEED = 255;       // Maximum motor speed
+int MIN_SPEED = 60;        // Minimum to prevent stalling
+int SPEED_INCREMENT = 25;  // Speed change per button press
+int SPEED_DROP = 50;       // Speed reduction on curves
+```
+
+### Tuning Tips
+* **Increase Kp:** More aggressive corrections, faster response
+* **Decrease Kp:** Gentler corrections, may be slower
+* **Increase Kd:** More damping, reduces oscillation
+* **Decrease Kd:** Less damping, may oscillate
+* **Increase SPEED_DROP:** Slower on curves (more stable)
+* **Decrease SPEED_DROP:** Faster on curves (may overshoot)
+
+---
+
+## How It Works
+
+### Line Following Algorithm (PD Control)
+
+**1. Sensor Reading**
+* Read 5 digital sensors (0=white, 1=black line)
+
+**2. Position Calculation**
+* Calculate weighted position error:
+  ```
+  Weights: FL=-2000, ML=-1000, M=0, MR=+1000, FR=+2000
+  Error = Sum(sensor × weight) / Active sensors
+  ```
+
+**3. PD Control**
+* Calculate correction based on error:
+  ```
+  P = error
+  D = error - lastError
+  correction = (Kp × P) + (Kd × D)
+  ```
+
+**4. Speed Adjustment**
+* Slow down on sharp turns:
+  ```
+  if |error| > 1000:
+      currentSpeed = BASE_SPEED - SPEED_DROP
+  ```
+
+**5. Motor Control**
+* Apply correction to motors:
+  ```
+  leftSpeed = currentSpeed + correction
+  rightSpeed = currentSpeed - correction
+  ```
+
+### Sensor Logic
+
+The sensors are configured for **Active-HIGH** (digital):
+* **1 (HIGH)** = Black Line Detected
+* **0 (LOW)** = White Surface Detected
+
+### Manual Control
+
+Tank-style mixing of throttle and steering:
+```cpp
+leftMotorSpeed = throttle - steering
+rightMotorSpeed = throttle + steering
+```
+
+---
+
+## Setup Instructions
+
+### 1. Hardware Assembly
+* Connect motors to motor driver
+* Wire 5 sensors in array with equal spacing
+* Connect motor driver to Arduino pins
+* Set up SoftwareSerial between Arduino and ESP32
+* Ensure common ground connection
+
+### 2. Software Upload
+* Install Arduino IDE
+* Install SoftwareSerial library (if not included)
+* Upload `goodcode.ino` to Arduino
+* Configure ESP32 with gamepad receiver code (separate project)
+
+### 3. Calibration
+* Place robot on track
+* Adjust sensor height (3-5mm from surface recommended)
+* Test sensor readings via Serial Monitor (115200 baud)
+* Tune Kp/Kd values for your specific track
+
+### 4. Testing
+* Open Serial Monitor (115200 baud)
+* Verify controller data reception: `Arduino Ready. Waiting for <Y,X,Cross,Circle,L1,R1>...`
+* Test Manual Mode first using joystick
+* Switch to Auto Mode on line
+* Adjust speed using L1/R1 buttons
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+| :--- | :--- |
+| Robot doesn't move | Check motor connections and power supply |
+| Oscillates on line | Decrease Kp or increase Kd |
+| Loses line on curves | Increase SPEED_DROP or decrease BASE_SPEED |
+| Slow response | Increase Kp |
+| No controller data | Check ESP32 serial connection (pins 10/11) and baud rate |
+| Motors run backwards | Swap forward/backward pins in code |
+| Sensors not detecting | Check sensor height and verify digital output |
+| Speed won't change | Verify L1/R1 button signals in Serial Monitor |
+
+---
+
+## Code Structure
+
+```
+goodcode.ino
+├── Pin Definitions & Tuning Parameters
+├── Global Variables
+├── setup()
+│   ├── Pin initialization
+│   └── Serial initialization
+├── loop()
+│   ├── recvWithStartEndMarkers()  // Receive data from ESP32
+│   ├── parseData()                // Parse controller input
+│   ├── adjustSpeed()              // Handle L1/R1 speed changes
+│   └── handleState()              // Switch between modes
+├── Control Functions
+│   ├── runPDLineFollower()        // Advanced PD line following
+│   └── driveRobot()               // Manual joystick control
+└── Motor Helpers
+    ├── setLeftMotor()
+    ├── setRightMotor()
+    ├── rotate_left()
+    ├── rotate_right()
+    └── stopRobot()
+```
 
 ---
 
 ## Usage Instructions
 
-1.  **Upload:** Upload the sketch to your Arduino board.
-2.  **Power On:** Power on the robot and the ESP32/Controller setup.
-3.  **Start-up:** The Arduino waits for data: `Arduino Ready. Waiting for <Y,X,Cross,Circle>...`
-4.  **Mode Select:**
-    * Press the **Cross** button on the controller to activate **Autonomous Line Following** mode.
-    * Press the **Circle** button on the controller to activate **Manual Drive** mode.
-5.  **Operation:**
-    * **Manual:** Use the controller's analog joystick to drive.
-    * **Autonomous:** Place the robot on a black line track. It will begin following the line until the mode is switched.
+1. **Upload:** Upload `goodcode.ino` to your Arduino board
+2. **Power On:** Power on the robot and ESP32/Controller setup
+3. **Start-up:** Arduino displays: `Arduino Ready. Waiting for <Y,X,Cross,Circle,L1,R1>...`
+4. **Mode Select:**
+   * Press **Cross** button → Activate **Auto Mode** (line following)
+   * Press **Circle** button → Activate **Manual Mode** (stop + manual control)
+5. **Speed Control:**
+   * Press **R1** → Increase base speed by 25
+   * Press **L1** → Decrease base speed by 25
+   * Speed changes are displayed in Serial Monitor
+6. **Operation:**
+   * **Manual:** Use controller joystick to drive
+   * **Auto:** Place robot on black line track - it will follow until mode is switched
+
+---
+
+## License
+
+Open source - feel free to modify and adapt for your projects.
+
+---
+
+## Credits
+
+Developed for Arduino-based line-following robot with ESP32 wireless control integration.
